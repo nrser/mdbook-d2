@@ -8,9 +8,17 @@ use std::{
 
 use anyhow::bail;
 use mdbook_preprocessor::{book::SectionNumber, PreprocessorContext};
-use pulldown_cmark::{CowStr, Event, LinkType, Tag, TagEnd};
+use pulldown_cmark::{Event, Tag, TagEnd};
 
 use crate::config::{Config, Fonts};
+
+/// CSS class applied to rendered D2 diagram HTML so it can be targeted with
+/// user stylesheets.
+const DIAGRAM_CLASS: &str = "mdbook-d2";
+
+/// We're using `r#"..."#` for HTML strings so we don't have to escape double-quotes around
+/// attribute values, which I guess doesn't recognize `\n` newlines, so interpolate this instead.
+const N: &str = "\n";
 
 /// Represents the backend for processing D2 diagrams
 pub struct Backend {
@@ -143,18 +151,51 @@ impl Backend {
         }
     }
 
+    /// Render the diagram SVG source directly into the markdown source inside an [HTML block].
+    ///
+    /// Used when [`mdbook_d2::config::Config::inline`] is `true` (default).
+    ///
+    /// SVG source is wrapped in a `<pre>` to tolerate any blank lines, with `class="mdbook-d2"` for
+    /// style targeting.
+    ///
+    /// [HTML block]: https://spec.commonmark.org/0.31.2/#html-blocks
     fn render_inline(
         &self,
         ctx: &RenderContext,
         content: &str,
     ) -> anyhow::Result<Vec<Event<'static>>> {
         let args = self.basic_args();
+        // TODO Use `--no-xml-tag` option to omit the `<?xml version="1.0" encoding="utf-8"?>` tag,
+        //      which is not valid in HTML.
         let diagram = self.run_process(ctx, content, args)?;
-        Ok(vec![Event::Html(
-            format!("\n<pre>{diagram}</pre>\n").into(),
-        )])
+
+        // We can only emit markdown — because [preprocessors] are [backend]-agnostic — but markdown
+        // includes a raw [HTML block] we can use: `Tag::HtmlBlock` around a `Event:Html` for each
+        // line.
+        //
+        // [preprocessor]: https://rust-lang.github.io/mdBook/for_developers/preprocessors.html
+        // [backend]: https://rust-lang.github.io/mdBook/for_developers/backends.html
+        // [HTML block]: https://spec.commonmark.org/0.31.2/#html-blocks
+        Ok(vec![
+            Event::Start(Tag::HtmlBlock),
+            // Nested inside a `<pre>` to avoid prematurely breaking out of the [HTML block] on any
+            // blank lines that may be in the diagram SVG source.
+            //
+            // NOTE Each `Event::Html` needs to be `\n`-terminated.
+            Event::Html(format!("<pre class=\"{DIAGRAM_CLASS}\">{diagram}</pre>\n").into()),
+            Event::End(TagEnd::HtmlBlock),
+        ])
     }
 
+    /// Render the diagram SVG to a file and include it via an `<img>` tag.
+    ///
+    /// Used when [`mdbook_d2::config::Config::inline`] is `false`.
+    ///
+    /// The `<img>` is wrapped in an `<a>` to open the SVG directly in a new tab, inside a
+    /// `<div class="mdbook-d2">` for easy styling. Emitted into the markdown source as a raw
+    /// [HTML block].
+    ///
+    /// [HTML block]: https://spec.commonmark.org/0.31.2/#html-blocks
     fn render_embedded(
         &self,
         ctx: &RenderContext,
@@ -171,21 +212,20 @@ impl Backend {
         let rel_path: PathBuf = std::iter::repeat_n(Path::new(".."), depth)
             .collect::<PathBuf>()
             .join(self.relative_file_path(ctx));
+        let src = rel_path.to_string_lossy().replace('\\', "/");
 
+        // Raw HTML block, one `Event::Html` for each line to emit. See comment in
+        // [`render_inline`].
         Ok(vec![
-            Event::Start(Tag::Paragraph),
-            Event::Start(Tag::Image {
-                link_type: LinkType::Inline,
-                dest_url: rel_path
-                    .to_string_lossy()
-                    .to_string()
-                    .replace('\\', "/")
-                    .into(),
-                title: CowStr::Borrowed(""),
-                id: CowStr::Borrowed(""),
-            }),
-            Event::End(TagEnd::Image),
-            Event::End(TagEnd::Paragraph),
+            Event::Start(Tag::HtmlBlock),
+            // NOTE Each `Event::Html` needs to be `\n`-terminated.
+            // NOTE No blank lines! See https://spec.commonmark.org/0.31.2/#html-blocks
+            Event::Html(format!(r#"<div class="{DIAGRAM_CLASS}">{N}"#).into()),
+            Event::Html(format!(r#"    <a href="{src}" target="_blank">{N}"#).into()),
+            Event::Html(format!(r#"        <img src="{src}" alt="" />{N}"#).into()),
+            Event::Html("    </a>\n".into()),
+            Event::Html("</div>\n".into()),
+            Event::End(TagEnd::HtmlBlock),
         ])
     }
 
@@ -257,5 +297,72 @@ impl Backend {
             );
             bail!(msg)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+    use pulldown_cmark_to_cmark::cmark_with_options;
+
+    use super::{DIAGRAM_CLASS, N};
+
+    fn round_trip_html(events: Vec<Event<'_>>) -> String {
+        let mut markdown = String::new();
+        cmark_with_options(
+            events.into_iter(),
+            &mut markdown,
+            pulldown_cmark_to_cmark::Options::default(),
+        )
+        .unwrap();
+
+        let mut html = String::new();
+        pulldown_cmark::html::push_html(&mut html, Parser::new_ext(&markdown, Options::all()));
+        html
+    }
+
+    #[test]
+    fn html_block_is_separated_from_neighboring_paragraphs() {
+        let mut events = vec![
+            Event::Start(Tag::Paragraph),
+            Event::Text("Hello.".into()),
+            Event::End(TagEnd::Paragraph),
+        ];
+        let src = "d2/1.1.svg";
+        events.extend([
+            Event::Start(Tag::HtmlBlock),
+            Event::Html(format!(r#"<div class="{DIAGRAM_CLASS}">{N}"#).into()),
+            Event::Html(format!(r#"    <a href="{src}" target="_blank">{N}"#).into()),
+            Event::Html(format!(r#"        <img src="{src}" alt="" />{N}"#).into()),
+            Event::Html("    </a>\n".into()),
+            Event::Html("</div>\n".into()),
+            Event::End(TagEnd::HtmlBlock),
+        ]);
+        events.extend([
+            Event::Start(Tag::Paragraph),
+            Event::Text("Goodbye.".into()),
+            Event::End(TagEnd::Paragraph),
+        ]);
+
+        let html = round_trip_html(events);
+
+        assert!(
+            html.contains("<p>Hello.</p>"),
+            "previous paragraph should close before the diagram, got: {html}"
+        );
+        assert!(
+            html.contains("<p>Goodbye.</p>"),
+            "following paragraph should start after the diagram, got: {html}"
+        );
+        assert!(
+            !html.contains("<p></p>"),
+            "block HTML should not leave an empty paragraph, got: {html}"
+        );
+        assert!(
+            html.contains(r#"<div class="mdbook-d2">"#)
+                && html.contains(r#"href="d2/1.1.svg""#)
+                && html.contains(r#"src="d2/1.1.svg""#),
+            "diagram should render as a classed linked image, got: {html}"
+        );
     }
 }

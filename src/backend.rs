@@ -10,7 +10,7 @@ use anyhow::bail;
 use mdbook_preprocessor::{book::SectionNumber, PreprocessorContext};
 use pulldown_cmark::{Event, Tag, TagEnd};
 
-use crate::config::{Config, Fonts};
+use crate::config::Config;
 
 /// CSS class applied to rendered D2 diagram HTML so it can be targeted with
 /// user stylesheets.
@@ -22,18 +22,10 @@ const N: &str = "\n";
 
 /// Represents the backend for processing D2 diagrams
 pub struct Backend {
-    /// Absolute path to the D2 binary
-    path: PathBuf,
-    /// Relative path to the output directory for generated diagrams
-    output_dir: PathBuf,
+    /// Configuration from user's `book.toml`
+    config: Config,
     /// Absolute path to the source directory of the book
     source_dir: PathBuf,
-    /// Layout engine to use for D2 diagrams
-    layout: Option<String>,
-    inline: bool,
-    fonts: Option<Fonts>,
-    theme_id: Option<String>,
-    dark_theme_id: Option<String>,
 }
 
 /// Context for rendering a specific diagram
@@ -84,16 +76,7 @@ impl Backend {
     /// * `config` - Configuration for the D2 preprocessor
     /// * `source_dir` - Absolute path to the book's source directory
     pub fn new(config: Config, source_dir: PathBuf) -> Self {
-        Self {
-            path: config.path,
-            output_dir: config.output_dir,
-            layout: config.layout,
-            inline: config.inline,
-            source_dir,
-            fonts: config.fonts,
-            theme_id: config.theme_id,
-            dark_theme_id: config.dark_theme_id,
-        }
+        Self { config, source_dir }
     }
 
     /// Creates a Backend instance from a [`PreprocessorContext`]
@@ -111,11 +94,6 @@ impl Backend {
         Self::new(config, source_dir)
     }
 
-    /// Returns the relative path to the output directory
-    fn output_dir(&self) -> &Path {
-        &self.output_dir
-    }
-
     /// Constructs the absolute file path for a diagram
     ///
     /// # Arguments
@@ -131,7 +109,7 @@ impl Backend {
     /// * `ctx` - The render context for the diagram
     fn relative_file_path(&self, ctx: &RenderContext) -> PathBuf {
         let filename = filename(ctx);
-        self.output_dir.join(filename)
+        self.config.output_dir.join(filename)
     }
 
     /// Renders a D2 diagram and returns the appropriate markdown events
@@ -144,7 +122,7 @@ impl Backend {
         ctx: &RenderContext,
         content: &str,
     ) -> anyhow::Result<Vec<Event<'static>>> {
-        if self.inline {
+        if self.config.inline {
             self.render_inline(ctx, content)
         } else {
             self.render_embedded(ctx, content)
@@ -201,7 +179,7 @@ impl Backend {
         ctx: &RenderContext,
         content: &str,
     ) -> anyhow::Result<Vec<Event<'static>>> {
-        fs::create_dir_all(Path::new(&self.source_dir).join(self.output_dir())).unwrap();
+        fs::create_dir_all(Path::new(&self.source_dir).join(&self.config.output_dir)).unwrap();
         let mut args = self.basic_args();
         let filepath = self.filepath(ctx);
         args.push(filepath.as_os_str());
@@ -232,7 +210,7 @@ impl Backend {
     fn basic_args(&self) -> Vec<&OsStr> {
         let mut args = vec![];
 
-        if let Some(fonts) = &self.fonts {
+        if let Some(fonts) = &self.config.fonts {
             args.extend([
                 OsStr::new("--font-regular"),
                 fonts.regular.as_os_str(),
@@ -242,13 +220,13 @@ impl Backend {
                 fonts.bold.as_os_str(),
             ]);
         }
-        if let Some(layout) = &self.layout {
+        if let Some(layout) = &self.config.layout {
             args.extend([OsStr::new("--layout"), layout.as_ref()]);
         }
-        if let Some(theme_id) = &self.theme_id {
+        if let Some(theme_id) = &self.config.theme_id {
             args.extend([OsStr::new("--theme"), theme_id.as_ref()]);
         }
-        if let Some(dark_theme_id) = &self.dark_theme_id {
+        if let Some(dark_theme_id) = &self.config.dark_theme_id {
             args.extend([OsStr::new("--dark-theme"), dark_theme_id.as_ref()]);
         }
         args.push(OsStr::new("-"));
@@ -271,7 +249,7 @@ impl Backend {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        let child = Command::new(&self.path)
+        let child = Command::new(&self.config.path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

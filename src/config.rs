@@ -16,6 +16,10 @@ mod default {
     pub const fn inline() -> bool {
         true
     }
+
+    pub const fn link_img() -> bool {
+        false
+    }
 }
 
 #[derive(Deserialize, PartialEq, Eq, Debug)]
@@ -49,6 +53,15 @@ pub struct Config {
 
     pub theme_id: Option<String>,
     pub dark_theme_id: Option<String>,
+
+    /// Wrap embedded `<img src="...">` in a link to the SVG file (`a.href = img.src`).
+    ///
+    /// Makes it so you can click the diagram to view it full-size. Uses `target="_blank"` to open
+    /// in a new tab. Convenient shortcut for right-click → "Open Image in New Tab".
+    ///
+    /// Default is `false`. Only relevant when [`Config::inline`] is `false`.
+    #[serde(default = "default::link_img")]
+    pub link_img: bool,
 }
 
 impl Default for Config {
@@ -61,6 +74,7 @@ impl Default for Config {
             fonts: None,
             theme_id: None,
             dark_theme_id: None,
+            link_img: default::link_img(),
         }
     }
 }
@@ -100,7 +114,8 @@ output-dir = "d2-img"
         output_dir: PathBuf::from("d2-img"),
         fonts: None,
         theme_id: None,
-        dark_theme_id:None,
+        dark_theme_id: None,
+        link_img: false,
     }
         ; "custom"
     )]

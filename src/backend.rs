@@ -169,9 +169,9 @@ impl Backend {
     ///
     /// Used when [`mdbook_d2::config::Config::inline`] is `false`.
     ///
-    /// The `<img>` is wrapped in an `<a>` to open the SVG directly in a new tab, inside a
-    /// `<div class="mdbook-d2">` for easy styling. Emitted into the markdown source as a raw
-    /// [HTML block].
+    /// The image sits in a `<div class="mdbook-d2">` for styling. When
+    /// [`mdbook_d2::config::Config::link_img`] is set, the `<img>` is wrapped in an `<a>` that
+    /// opens the SVG in a new tab. Emitted into the markdown source as a raw [HTML block].
     ///
     /// [HTML block]: https://spec.commonmark.org/0.31.2/#html-blocks
     fn render_embedded(
@@ -194,17 +194,28 @@ impl Backend {
 
         // Raw HTML block, one `Event::Html` for each line to emit. See comment in
         // [`render_inline`].
-        Ok(vec![
+        let mut events = vec![
             Event::Start(Tag::HtmlBlock),
             // NOTE Each `Event::Html` needs to be `\n`-terminated.
             // NOTE No blank lines! See https://spec.commonmark.org/0.31.2/#html-blocks
             Event::Html(format!(r#"<div class="{DIAGRAM_CLASS}">{N}"#).into()),
-            Event::Html(format!(r#"    <a href="{src}" target="_blank">{N}"#).into()),
-            Event::Html(format!(r#"        <img src="{src}" alt="" />{N}"#).into()),
-            Event::Html("    </a>\n".into()),
+        ];
+        if self.config.link_img {
+            events.extend([
+                Event::Html(format!(r#"    <a href="{src}" target="_blank">{N}"#).into()),
+                Event::Html(format!(r#"        <img src="{src}" alt="" />{N}"#).into()),
+                Event::Html("    </a>\n".into()),
+            ]);
+        } else {
+            events.push(Event::Html(
+                format!(r#"    <img src="{src}" alt="" />{N}"#).into(),
+            ));
+        }
+        events.extend([
             Event::Html("</div>\n".into()),
             Event::End(TagEnd::HtmlBlock),
-        ])
+        ]);
+        Ok(events)
     }
 
     fn basic_args(&self) -> Vec<&OsStr> {

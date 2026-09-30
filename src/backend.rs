@@ -9,6 +9,7 @@ use std::{
 use anyhow::bail;
 use mdbook_preprocessor::{book::SectionNumber, PreprocessorContext};
 use pulldown_cmark::{Event, Tag, TagEnd};
+use semver::Version;
 
 use crate::config::Config;
 
@@ -20,12 +21,19 @@ const DIAGRAM_CLASS: &str = "mdbook-d2";
 /// attribute values, which I guess doesn't recognize `\n` newlines, so interpolate this instead.
 const N: &str = "\n";
 
+/// First `d2` release that accepts `--no-xml-tag`.
+///
+/// <https://github.com/terrastruct/d2/releases/tag/v0.6.9>
+const NO_XML_TAG_MIN: Version = Version::new(0, 6, 9);
+
 /// Represents the backend for processing D2 diagrams
 pub struct Backend {
     /// Configuration from user's `book.toml`
     config: Config,
     /// Absolute path to the source directory of the book
     source_dir: PathBuf,
+    /// `d2` accepts `--no-xml-tag` (0.6.9 or newer).
+    supports_no_xml_tag: bool,
 }
 
 /// Context for rendering a specific diagram
@@ -76,7 +84,13 @@ impl Backend {
     /// * `config` - Configuration for the D2 preprocessor
     /// * `source_dir` - Absolute path to the book's source directory
     pub fn new(config: Config, source_dir: PathBuf) -> Self {
-        Self { config, source_dir }
+        let supports_no_xml_tag =
+            d2_version(&config.path).is_some_and(|version| version >= NO_XML_TAG_MIN);
+        Self {
+            config,
+            source_dir,
+            supports_no_xml_tag,
+        }
     }
 
     /// Creates a Backend instance from a [`PreprocessorContext`]
@@ -143,8 +157,6 @@ impl Backend {
         content: &str,
     ) -> anyhow::Result<Vec<Event<'static>>> {
         let args = self.basic_args();
-        // TODO Use `--no-xml-tag` option to omit the `<?xml version="1.0" encoding="utf-8"?>` tag,
-        //      which is not valid in HTML.
         let diagram = self.run_process(ctx, content, args)?;
 
         // We can only emit markdown — because [preprocessors] are [backend]-agnostic — but markdown
@@ -240,6 +252,10 @@ impl Backend {
         if let Some(dark_theme_id) = &self.config.dark_theme_id {
             args.extend([OsStr::new("--dark-theme"), dark_theme_id.as_ref()]);
         }
+        // The XML declaration is invalid in HTML, so drop it only when the SVG is inlined.
+        if self.config.inline && self.supports_no_xml_tag {
+            args.push(OsStr::new("--no-xml-tag"));
+        }
         args.push(OsStr::new("-"));
         args
     }
@@ -289,12 +305,70 @@ impl Backend {
     }
 }
 
+/// Read `d2 --version`.
+///
+/// # Arguments
+/// * `path` - Program name or location. From [`Config::path`], which defaults to `"d2"`.
+fn d2_version(path: &Path) -> Option<Version> {
+    let output = match Command::new(path).arg("--version").output() {
+        Ok(output) => output,
+        Err(err) => {
+            eprintln!(
+                "warning: failed to run `{} --version`: {err}",
+                path.display()
+            );
+            return None;
+        }
+    };
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = stderr.trim();
+        if stderr.is_empty() {
+            eprintln!(
+                "warning: `{} --version` failed ({})",
+                path.display(),
+                output.status
+            );
+        } else {
+            eprintln!(
+                "warning: `{} --version` failed ({}): {stderr}",
+                path.display(),
+                output.status
+            );
+        }
+        return None;
+    }
+    let raw = if output.stdout.is_empty() {
+        output.stderr
+    } else {
+        output.stdout
+    };
+    let text = String::from_utf8_lossy(&raw);
+    parse_d2_version(&text)
+        .inspect_err(|err| {
+            eprintln!(
+                "warning: could not parse `{} --version` output {text:?}: {err}",
+                path.display()
+            );
+        })
+        .ok()
+}
+
+/// Parse `d2 --version` output, accepting an optional leading `v`.
+fn parse_d2_version(output: &str) -> anyhow::Result<Version> {
+    let Some(token) = output.split_whitespace().next() else {
+        bail!("empty version output");
+    };
+    let token = token.strip_prefix('v').unwrap_or(token);
+    Ok(Version::parse(token)?)
+}
+
 #[cfg(test)]
 mod tests {
     use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
     use pulldown_cmark_to_cmark::cmark_with_options;
 
-    use super::{DIAGRAM_CLASS, N};
+    use super::{parse_d2_version, DIAGRAM_CLASS, N, NO_XML_TAG_MIN};
 
     fn round_trip_html(events: Vec<Event<'_>>) -> String {
         let mut markdown = String::new();
@@ -308,6 +382,21 @@ mod tests {
         let mut html = String::new();
         pulldown_cmark::html::push_html(&mut html, Parser::new_ext(&markdown, Options::all()));
         html
+    }
+
+    #[test]
+    fn parses_d2_version_output() {
+        let current = parse_d2_version("v0.7.1\n").expect("v0.7.1");
+        assert!(current >= NO_XML_TAG_MIN);
+
+        let boundary = parse_d2_version("0.6.9").expect("0.6.9");
+        assert!(boundary >= NO_XML_TAG_MIN);
+
+        let older = parse_d2_version("v0.6.8\n").expect("v0.6.8");
+        assert!(older < NO_XML_TAG_MIN);
+
+        assert!(parse_d2_version("not a version").is_err());
+        assert!(parse_d2_version("").is_err());
     }
 
     #[test]

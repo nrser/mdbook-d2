@@ -8,6 +8,10 @@ fn inline() {
 
     assert!(test_book.chapter1_contains(r"<svg"));
     assert!(test_book.chapter1_contains(r"</svg>"));
+    assert!(
+        !test_book.chapter1_contains("<?xml"),
+        "inline SVG should omit the XML declaration"
+    );
     assert!(test_book.chapter1_contains(r"<rect"));
     assert!(test_book.chapter1_contains(r"</rect>"));
 }

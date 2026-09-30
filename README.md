@@ -7,6 +7,29 @@ A preprocessor for [mdbook](https://github.com/rust-lang/mdBook) to convert
 `d2` codeblocks into SVG images using
 [D2](https://github.com/terrastruct/d2).
 
+## 🍴 Forklog 🪵
+
+This is a fork of [danieleades/mdbook-d2], split after [v0.3.8] at commit
+[02b8bb3].
+
+[danieleades/mdbook-d2]: https://github.com/danieleades/mdbook-d2
+[v0.3.8]: https://github.com/danieleades/mdbook-d2/releases/tag/v0.3.8
+[02b8bb3]: https://github.com/danieleades/mdbook-d2/commit/02b8bb3ff2f86e41caf0b0e25a6260db4a772df1
+
+-   Both inline and embedded rendering use an [HTML block], with
+    `class="mdbook-d2"` assigned to the top-level element.
+
+    Useful for targeting the elements with CSS rules; for example allowing
+    diagrams to render wider than the text column.
+
+-   Add `link-img: bool` config option: link `<img>` embeddings to open the
+    `.svg` file in a new tab.
+
+-   Inline rendering uses `--no-xml-tag` flag to omit `<?xml ...?>` declaration
+    when `d2` supports it (version `0.6.9` or newer).
+
+[HTML block]: https://spec.commonmark.org/0.31.2/#html-blocks
+
 ## Installation
 
 Install with cargo:

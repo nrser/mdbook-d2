@@ -62,6 +62,13 @@ pub struct Config {
     /// Default is `false`. Only relevant when [`Config::inline`] is `false`.
     #[serde(default = "default::link_img")]
     pub link_img: bool,
+
+    /// Additional command line arguments to pass to the `d2` program.
+    ///
+    /// Each entry is one argument, placed after the flags this preprocessor sets and before the
+    /// diagram input. For example, `extra-args = ["--pad", "0"]`.
+    #[serde(default)]
+    pub extra_args: Option<Vec<String>>,
 }
 
 impl Default for Config {
@@ -75,6 +82,7 @@ impl Default for Config {
             theme_id: None,
             dark_theme_id: None,
             link_img: default::link_img(),
+            extra_args: None,
         }
     }
 }
@@ -116,8 +124,30 @@ output-dir = "d2-img"
         theme_id: None,
         dark_theme_id: None,
         link_img: false,
+        extra_args: None,
     }
         ; "custom"
+    )]
+    #[test_case(
+        r#"
+extra-args = ["--pad", "0", "--sketch"]
+"#
+    => Config {
+        path: PathBuf::from("d2"),
+        layout: None,
+        inline: true,
+        output_dir: PathBuf::from("d2"),
+        fonts: None,
+        theme_id: None,
+        dark_theme_id: None,
+        link_img: false,
+        extra_args: Some(vec![
+            String::from("--pad"),
+            String::from("0"),
+            String::from("--sketch"),
+        ]),
+    }
+        ; "extra args"
     )]
     fn parse(input: &str) -> Config {
         toml::from_str(input).unwrap()

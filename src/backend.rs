@@ -256,6 +256,10 @@ impl Backend {
         if self.config.inline && self.supports_no_xml_tag {
             args.push(OsStr::new("--no-xml-tag"));
         }
+        // After the known flags so these can override them. Before `-`, which is the stdin input.
+        if let Some(extra_args) = &self.config.extra_args {
+            args.extend(extra_args.iter().map(OsStr::new));
+        }
         args.push(OsStr::new("-"));
         args
     }

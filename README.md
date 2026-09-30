@@ -23,10 +23,24 @@ This is a fork of [danieleades/mdbook-d2], split after [v0.3.8] at commit
     diagrams to render wider than the text column.
 
 -   Add `link-img: bool` config option: link `<img>` embeddings to open the
-    `.svg` file in a new tab.
+    `.svg` file in a new tab. Only relevant when `inline` is `false`.
+
+    ```toml
+    [preprocessor.d2]
+    inline = false
+    link-img = true
+    ```
 
 -   Inline rendering uses `--no-xml-tag` flag to omit `<?xml ...?>` declaration
     when `d2` supports it (version `0.6.9` or newer).
+
+-   Add `extra-args: array<string>` config option to pass additional arguments
+    to `d2`.
+
+    ```toml
+    [preprocessor.d2]
+    extra-args = ["--pad", "40"]
+    ```
 
 [HTML block]: https://spec.commonmark.org/0.31.2/#html-blocks
 
